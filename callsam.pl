@@ -20,7 +20,7 @@ exit(main());
 sub main{
   my $settings={};
   GetOptions($settings,qw(help min-coverage=i min-frequency=s reference=s numcpus=i unsorted variants-only mpileupxopts=s debug));
-  die usage() if($$settings{help});
+  die usage() if($$settings{help} || !@ARGV);
   $$settings{'min-coverage'}||=10;
   $$settings{'min-frequency'}||=0.75;
   $$settings{'reference'} || logmsg("Warning: reference not given");
@@ -331,5 +331,6 @@ sub usage{
   --unsorted Produces streaming output, but unsorted due to thread race conditions
   --variants-only Do not print invariant sites
   -mpileup '-q 1' Send options to mpileup 'samtools mpileup' for additional help
+  --debug To call only the first 10k bases
   "
 }
