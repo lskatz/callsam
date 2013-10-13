@@ -1,3 +1,12 @@
+CallSam
+
+AUTHOR
+Lee Katz <lkatz@cdc.gov>
+
+INSTALLATION
+Copy the perl script to a bin directory in your path
+
+USAGE
 Creates a vcf from a sorted bam file.
   Usage: callsam.pl file.sorted.bam > out.vcf
   --min-coverage 10 Min depth at a position
@@ -7,3 +16,14 @@ Creates a vcf from a sorted bam file.
   --unsorted Produces streaming output, but unsorted due to thread race conditions
   --variants-only Do not print invariant sites
   -mpileup '-q 1' Send options to mpileup 'samtools mpileup' for additional help
+
+EXAMPLES
+# very conservative
+callsam.pl file.sorted.bam --min-coverage 20 --min-frequency 1 > out.vcf
+# even more conservative with an mpileup parameter
+callsam.pl file.sorted.bam --min-coverage 20 --min-frequency 1 -mpileup '-q 20' > out.vcf
+# fast
+callsam.pl file.sorted.bam --numcpus 12 --unsorted > out.vcf
+# fast and smaller, more targeted vcf file
+callsam.pl file.sorted.bam --numcpus 12 --unsorted --variants-only > out.vcf
+
