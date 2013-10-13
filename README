@@ -1,5 +1,19 @@
 CallSam
 
+SYNOPSIS
+
+CallSam is intended to be a simple base caller based on majority rules
+and level of depth. It is also intended to be a base caller for every
+site in the bam file. However, the user can choose to see only
+variant sites by specifying --variants-only.
+
+CallSam is fast because it is multithreaded. However due to thread
+race conditions, the base calls could be unsorted. Internally,
+CallSam sorts the VCF on position before outputting it unless the 
+user specifies the --unsorted flag.  Sorting is moot if only one
+cpu is being used and so --unsorted is set internally if only one
+cpu is specified. One cpu is the default.
+
 AUTHOR
 Lee Katz <lkatz@cdc.gov>
 
@@ -7,6 +21,7 @@ INSTALLATION
 Copy the perl script to a bin directory in your path
 
 USAGE
+
 Creates a vcf from a sorted bam file.
   Usage: callsam.pl file.sorted.bam > out.vcf
   --min-coverage 10 Min depth at a position
@@ -18,12 +33,17 @@ Creates a vcf from a sorted bam file.
   -mpileup '-q 1' Send options to mpileup 'samtools mpileup' for additional help
 
 EXAMPLES
+
 # very conservative
 callsam.pl file.sorted.bam --min-coverage 20 --min-frequency 1 > out.vcf
 # even more conservative with an mpileup parameter
 callsam.pl file.sorted.bam --min-coverage 20 --min-frequency 1 -mpileup '-q 20' > out.vcf
+
 # fast
 callsam.pl file.sorted.bam --numcpus 12 --unsorted > out.vcf
 # fast and smaller, more targeted vcf file
 callsam.pl file.sorted.bam --numcpus 12 --unsorted --variants-only > out.vcf
+
+# Sort it yourself, not using internal sorting.
+callsam.pl file.sorted.bam --unsorted | sort -k1,1 -k2,2n > out.vcf
 
