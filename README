@@ -1,0 +1,9 @@
+Creates a vcf from a sorted bam file.
+  Usage: callsam.pl file.sorted.bam > out.vcf
+  --min-coverage 10 Min depth at a position
+  --min-frequency 0.75 Min needed for majority
+  -ref reference.fasta (optional)
+  --numcpus 1
+  --unsorted Produces streaming output, but unsorted due to thread race conditions
+  --variants-only Do not print invariant sites
+  -mpileup '-q 1' Send options to mpileup 'samtools mpileup' for additional help
