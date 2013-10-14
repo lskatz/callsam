@@ -12,9 +12,11 @@ use Bio::Perl;
 use File::Basename;
 use threads;
 use Thread::Queue;
+use FindBin;
+use lib "$FindBin::Bin/../lib";
+use CallSam qw/logmsg/;
 
 $0=fileparse($0);
-sub logmsg{$|++; print STDERR "$0: @_\n"; $|--;}
 exit(main());
 
 sub main{
