@@ -92,5 +92,14 @@ sub is_bam{
   return is_sam($tmpSam,$settings);
 }
 
+# TODO
+sub is_cram{
+  my($file,$settings)=@_;
+  return 0; # return that the file isn't cram because the code isn't finished
+  my $jar=$$settings{cramJar} || die "ERROR: cramJar needs to be specified in \$settings";
+  my $exec="java -jar '$jar'";
+
+}
+
 1;
 

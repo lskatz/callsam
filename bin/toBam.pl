@@ -9,12 +9,12 @@ use Getopt::Long;
 use Data::Dumper;
 use FindBin;
 use lib "$FindBin::Bin/../lib";
-use CallSam qw/logmsg mktempdir is_sam is_bam/;
+use CallSam qw/logmsg mktempdir is_sam is_bam is_cram/;
 
 exit main();
 sub main{
   my $settings={};
-  GetOptions($settings,qw(help tempdir=s keep));
+  GetOptions($settings,qw(help tempdir=s keep reference=s));
   die usage() if($$settings{help} || @ARGV<1);
   $$settings{tempdir}||=CallSam::mktempdir();
   
@@ -26,10 +26,10 @@ sub main{
   my $sorted=sortBam($bam,$settings);
   logmsg "Indexing bam files";
   indexBam($sorted,$settings);
-  logmsg "Marging bam files";
+  logmsg "Merging bam files";
   my $merged=mergeBam($sorted,$settings);
-  logmsg "Indexing the merged bam file";
-  indexBam([$merged],$settings);
+  system("cat '$merged'");
+  die if $?;
   return 0;
 }
 
@@ -42,6 +42,8 @@ sub toBam{
       $bam=samToBam($f,$settings);
     } elsif(is_bam($f,$settings)){
       $bam=$f;
+    } elsif(is_cram($f,$settings)){
+      $bam=cramToBam($f,$settings));
     } else {
       die "ERROR: I do not understand the format of $_";
     }
@@ -85,13 +87,21 @@ sub indexBam{
 # merges an array of sorted bams
 sub mergeBam{
   my($file,$settings)=@_;
-  die "TODO";
+  my $merged="$$settings{tempdir}/merged.bam";
+  return $$file[0] if(@$file==1);
+  my $bamString="'".join("' '",@$file)."'";
+  my $command="samtools merge '$merged' $bamString";
+  #logmsg $command;
+  system($command);
+  die if $?;
+  return $merged;
 }
 
 sub usage{
   "Transforms sam, bam, ... to a sorted and indexed bam file
   If multiple files are given, then they are merged with samtools merge
   Usage: $0 file.sam > file.bam
+  -r reference.assembly.fasta
   -t tempdir/
   --keep to keep all intermediate files
   "
