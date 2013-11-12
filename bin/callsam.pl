@@ -153,6 +153,9 @@ sub pileupWorker{
     my $ref=$$refBase{$F{contig}}[$F{pos}] || '.'; 
     # A samtools-style identifier for the appropriate VCF field.
     my $ID=$F{contig}.':'.$F{pos};
+    # uppercase the calls to standardize it and make comparisons easier
+    $ref=uc($ref);
+    $basecall=uc($basecall);
 
     # Use the info hash to generate the VCF info field
     my $info="";
