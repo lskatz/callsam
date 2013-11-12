@@ -227,10 +227,12 @@ sub findConsensus{
   $$F{info}{AC}=$nt{$winner};
 
   # Majority consensus requirement
-  my $frequency=sprintf("%0.2f",$nt{$winner}/$$F{depth});
+  my $frequency=0.00;
+    $frequency=sprintf("%0.2f",$nt{$winner}/$$F{depth}) if($$F{depth}>0);
   $passFail.="freq$frequency;" if($frequency < $$settings{'min-frequency'});
 
   # set the pass/fail field correctly
+  my $runnerUp=$winner;
   if($passFail){
     $winner="N";
     $passFail=~s/;+$//;
@@ -239,6 +241,8 @@ sub findConsensus{
   }
 
   # Make some kind of score for the SNP
+  # Currently: SUM(the quality score times the mapping quality)
+  #   or subtract a particular base's score if it does not agree with the consensus
   my $score=0;
   my @qual=map(ord($_)-33,split(//,$$F{qual}));
   my @baq =map(ord($_)-33,split(//,$$F{mappingQual}));
@@ -257,7 +261,7 @@ sub findConsensus{
   # If the score is too small, then the base call is ambiguous and doesn't pass the filter
   # TODO: test what the score theshold should be 
   if($score < 0){
-    $passFail="score:$score;mostlikely:$winner";
+    $passFail="score:$score;ifIHadToGuess:$runnerUp";
     $winner='N';
   }
 
