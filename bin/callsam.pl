@@ -21,7 +21,7 @@ exit(main());
 
 sub main{
   my $settings={};
-  GetOptions($settings,qw(help min-coverage=i min-frequency=s reference=s numcpus=i unsorted variants-only mpileupxopts=s debug));
+  GetOptions($settings,qw(help min-coverage=i min-frequency=s reference=s numcpus=i unsorted variants-only mpileupxopts=s debug indels!));
   die usage() if($$settings{help} || !@ARGV);
   $$settings{'min-coverage'}||=10;
   $$settings{'min-frequency'}||=0.75;
@@ -108,6 +108,7 @@ sub bamToVcf{
   my $command="samtools mpileup $$settings{mpileupxopts} -O -s '$file'";
   logmsg "\n  $command";
   open($fp,"$command | ") or die "Could not open $file with samtools mpileup:$!";
+
   # Because it is cpu-heavy to enqueue once each line,
   # Save a bunch of lines in an array before enqueuing them.
   my @buffer;
@@ -198,6 +199,8 @@ sub vcfPrinter{
     return $contigA cmp $contigB if($contigA ne $contigB);
     $posA <=> $posB;
   } @unsorted;
+
+  # TODO keep track on whether the whole contig was expressed
   print $_ for(@sorted);
 }  
 
@@ -339,6 +342,7 @@ sub usage{
   --numcpus 1
   --unsorted Produces streaming output, but unsorted due to thread race conditions
   --variants-only Do not print invariant sites
+  --noindels      Do not include indels. Indel sites become 'N'.
   -mpileup '-q 1' Send options to mpileup 'samtools mpileup' for additional help
   --debug To call only the first 10k bases
   "
