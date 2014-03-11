@@ -22,14 +22,14 @@ exit(main());
 sub main{
   my $settings={};
   GetOptions($settings,qw(help min-coverage=i min-frequency=s reference=s numcpus=i unsorted variants-only mpileupxopts=s debug));
-  die usage() if($$settings{help} || !@ARGV);
+  die usage($settings) if($$settings{help} || !@ARGV);
   $$settings{'min-coverage'}||=10;
   $$settings{'min-frequency'}||=0.75;
   $$settings{'reference'} || logmsg("Warning: reference not given");
   $$settings{numcpus}||=1;
   $$settings{mpileupxopts}||="-q 1";
   my ($file)=@ARGV;
-  die "ERROR: need input file\n".usage() if(!$file);
+  die "ERROR: need input file\n".usage($settings) if(!$file);
   
   # If there is only 1 cpu, then the output can be unsorted streaming.
   if($$settings{numcpus} < 2){
@@ -55,7 +55,7 @@ sub readReference{
   my %seq;
 
   return \%seq if(!$$settings{reference});
-  die "Could not locate the reference $$settings{reference}\n".usage() if(!-f $$settings{reference});
+  die "Could not locate the reference $$settings{reference}\n".usage($settings) if(!-f $$settings{reference});
 
   my $in=Bio::SeqIO->new(-file=>$$settings{reference});
   while(my $seq=$in->next_seq){
@@ -331,7 +331,8 @@ sub parseDnaCigar{
 }
 
 sub usage{
-  "Creates a vcf from a sorted bam file.
+  my ($settings)=@_;
+  my $usage="Creates a vcf from a sorted bam file.
   Usage: $0 file.sorted.bam > out.vcf
   --min-coverage 10 Min depth at a position
   --min-frequency 0.75 Min needed for majority
@@ -341,5 +342,15 @@ sub usage{
   --variants-only Do not print invariant sites
   -mpileup '-q 1' Send options to mpileup 'samtools mpileup' for additional help
   --debug To call only the first 10k bases
-  "
+  -h for more help
+  ";
+  
+  return $usage if(!$$settings{help});
+  $usage.="
+  MORE HELP
+  The score at a position is the sum of the quality scores in the reads at that particular position times the mapping quality of those reads. Negative score for a base that does not agree with the consensus.
+  When there is an ambiguous base call though, there will be a field called ifIHadToGuess whose value is the best guess at that position.
+  ";
+
+  return $usage;
 }
