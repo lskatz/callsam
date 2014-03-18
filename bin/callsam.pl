@@ -21,13 +21,8 @@ exit(main());
 
 sub main{
   my $settings={};
-<<<<<<< HEAD
-  GetOptions($settings,qw(help min-coverage=i min-frequency=s reference=s numcpus=i unsorted variants-only mpileupxopts=s debug indels!));
-  die usage() if($$settings{help} || !@ARGV);
-=======
   GetOptions($settings,qw(help min-coverage=i min-frequency=s reference=s numcpus=i unsorted variants-only mpileupxopts=s debug));
   die usage($settings) if($$settings{help} || !@ARGV);
->>>>>>> 18dcfa25f97a0ccd763e3e112ed3a706c42c93c2
   $$settings{'min-coverage'}||=10;
   $$settings{'min-frequency'}||=0.75;
   $$settings{'reference'} || logmsg("Warning: reference not given");
