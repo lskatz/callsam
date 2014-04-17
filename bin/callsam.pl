@@ -337,6 +337,7 @@ sub usage{
   my ($settings)=@_;
   my $usage="Creates a vcf from a sorted bam file.
   Usage: $0 file.sorted.bam > out.vcf
+         $0 file.sorted.bam | gzip -c > out.vcf.gz # compressed
   --min-coverage 10 Min depth at a position
   --min-frequency 0.75 Min needed for majority
   -ref reference.fasta (optional)
