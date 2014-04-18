@@ -22,14 +22,14 @@ exit(main());
 sub main{
   my $settings={};
   GetOptions($settings,qw(help min-coverage=i min-frequency=s reference=s numcpus=i unsorted variants-only mpileupxopts=s debug));
-  die usage() if($$settings{help} || !@ARGV);
+  die usage($settings) if($$settings{help} || !@ARGV);
   $$settings{'min-coverage'}||=10;
   $$settings{'min-frequency'}||=0.75;
   $$settings{'reference'} || logmsg("Warning: reference not given");
   $$settings{numcpus}||=1;
   $$settings{mpileupxopts}||="-q 1";
   my ($file)=@ARGV;
-  die "ERROR: need input file\n".usage() if(!$file);
+  die "ERROR: need input file\n".usage($settings) if(!$file);
   
   # If there is only 1 cpu, then the output can be unsorted streaming.
   if($$settings{numcpus} < 2){
@@ -55,7 +55,7 @@ sub readReference{
   my %seq;
 
   return \%seq if(!$$settings{reference});
-  die "Could not locate the reference $$settings{reference}\n".usage() if(!-f $$settings{reference});
+  die "Could not locate the reference $$settings{reference}\n".usage($settings) if(!-f $$settings{reference});
 
   my $in=Bio::SeqIO->new(-file=>$$settings{reference});
   while(my $seq=$in->next_seq){
@@ -105,18 +105,21 @@ sub bamToVcf{
   # Feed each line of mpileup to the threads that analyze them.
   my $fp;
   my $numPositions=0;
-  my $command="samtools mpileup $$settings{mpileupxopts} -O -s '$file'";
+  my $refArg=($$settings{reference})?"-f $$settings{reference}":"";
+  my $command="samtools mpileup $$settings{mpileupxopts} $refArg -O -s '$file'";
   logmsg "\n  $command";
   open($fp,"$command | ") or die "Could not open $file with samtools mpileup:$!";
+
   # Because it is cpu-heavy to enqueue once each line,
   # Save a bunch of lines in an array before enqueuing them.
   my @buffer;
   while(<$fp>){
     $numPositions++;
     push(@buffer,$_);
-    if($numPositions % 10000 == 0){
+    if($numPositions % 100000 == 0){
       $Q->enqueue(@buffer);
       @buffer=();
+      logmsg "Enqueued $numPositions positions";
     }
     last if($$settings{debug} && $numPositions>9999);
   }
@@ -146,13 +149,16 @@ sub pileupWorker{
     @F{@bamField}=@F;
     $F{info}={DP=>$F{depth}}; # put the depth into the info field so that it is displayed correctly.
     # Turn the DNA cigar line to an array.
-    $F{dnaArr}=parseDnaCigar(\%F,$refBase,$settings);
+    ($F{dnaArr},$F{dnaDirection})=parseDnaCigar(\%F,$refBase,$settings);
     # Use the DNA array and other %F fields to make a consensus base.
     my ($basecall,$passFail,$qual)=findConsensus(\%F,$settings);
     # Find the reference base in the complex hash. A dot if not found.
     my $ref=$$refBase{$F{contig}}[$F{pos}] || '.'; 
     # A samtools-style identifier for the appropriate VCF field.
     my $ID=$F{contig}.':'.$F{pos};
+    # uppercase the calls to standardize it and make comparisons easier
+    $ref=uc($ref);
+    $basecall=uc($basecall);
 
     # Use the info hash to generate the VCF info field
     my $info="";
@@ -195,13 +201,17 @@ sub vcfPrinter{
     return $contigA cmp $contigB if($contigA ne $contigB);
     $posA <=> $posB;
   } @unsorted;
+
+  # TODO keep track on whether the whole contig was expressed
   print $_ for(@sorted);
 }  
 
 # finds the consensus for a position
 sub findConsensus{
   my($F,$settings)=@_;
-  my $passFail=""; # for the filter field in the VCF
+  # If passFail is set to _anything_ before the final base call is made, then it is considered a fail.
+  # It is literally used in the filter field though and is informative in the VCF output
+  my $passFail="";
   # min depth requirement
   $passFail.="d$$F{depth};" if($$F{depth} < $$settings{'min-coverage'});
 
@@ -224,10 +234,27 @@ sub findConsensus{
   $$F{info}{AC}=$nt{$winner};
 
   # Majority consensus requirement
-  my $frequency=sprintf("%0.2f",$nt{$winner}/$$F{depth});
+  my $frequency=0.00;
+    $frequency=sprintf("%0.2f",$nt{$winner}/$$F{depth}) if($$F{depth}>0);
   $passFail.="freq$frequency;" if($frequency < $$settings{'min-frequency'});
 
+  # Forward and reverse reads requirement {dnaDirection}
+  my %dCount=(F=>0,R=>0); # direction counter
+  for(my $i=0;$i<$$F{depth};$i++){
+    my $d= $$F{dnaDirection}[$i];
+    next if($d ne $winner);
+    my $direction=$$F{dnaDirection}[$i];
+    $dCount{$$F{dnaDirection}[$i]}++;
+  }
+  my $sum=$dCount{F}+$dCount{R};
+  if($sum > 0){ # sometimes forward/reverse is not specified and therefore cannot be used
+    if($dCount{F}/$sum < 0.1 || $dCount{R}/$sum < 0.1){
+      $passFail.="forwardReads$dCount{F};reverseReads$dCount{R};";
+    }
+  }
+
   # set the pass/fail field correctly
+  my $runnerUp=$winner;
   if($passFail){
     $winner="N";
     $passFail=~s/;+$//;
@@ -236,6 +263,8 @@ sub findConsensus{
   }
 
   # Make some kind of score for the SNP
+  # Currently: SUM(the quality score times the mapping quality)
+  #   or subtract a particular base's score if it does not agree with the consensus
   my $score=0;
   my @qual=map(ord($_)-33,split(//,$$F{qual}));
   my @baq =map(ord($_)-33,split(//,$$F{mappingQual}));
@@ -254,7 +283,7 @@ sub findConsensus{
   # If the score is too small, then the base call is ambiguous and doesn't pass the filter
   # TODO: test what the score theshold should be 
   if($score < 0){
-    $passFail="score:$score;mostlikely:$winner";
+    $passFail="score:$score;ifIHadToGuess:$runnerUp";
     $winner='N';
   }
 
@@ -266,6 +295,7 @@ sub parseDnaCigar{
   my($bamField,$refBase,$settings)=@_;
   my $cigar=$$bamField{dna};
   $cigar=uc($cigar); 
+  my @direction; # don't want 100% in one direction
   
   my $length=length($cigar);
   # Parse the cigar.
@@ -313,26 +343,48 @@ sub parseDnaCigar{
     if ($x eq '.' || $x eq ','){
       my $pos=$$bamField{pos};
       my $contig=$$bamField{contig};
-      $x=$$refBase{$contig}{$pos};
+      $nt=uc($$refBase{$contig}[$pos]);
+      $nt=lc($nt) if($x eq ','); # lowercase indicates reverse
       #die Dumper [$x,\@base,$bamField];
     } else {
       $nt=$x;
     }
+
+    # directionality
+    my $direction='F';
+    $direction='R' if($nt=~/[a-z,]/);
+    push(@direction,$direction);
+
     push(@base,$nt);
   }
-  return \@base;
+  return \@base if(!wantarray);
+  return (\@base,\@direction);
 }
 
 sub usage{
-  "Creates a vcf from a sorted bam file.
+  my ($settings)=@_;
+  my $usage="Creates a vcf from a sorted bam file.
   Usage: $0 file.sorted.bam > out.vcf
+         $0 file.sorted.bam | gzip -c > out.vcf.gz # compressed
   --min-coverage 10 Min depth at a position
   --min-frequency 0.75 Min needed for majority
-  -ref reference.fasta (optional)
   --numcpus 1
   --unsorted Produces streaming output, but unsorted due to thread race conditions
   --variants-only Do not print invariant sites
+  --noindels      Do not include indels. Indel sites become 'N'.
   -mpileup '-q 1' Send options to mpileup 'samtools mpileup' for additional help
+  -h for more help
+  ";
+  
+  return $usage if(!$$settings{help});
+  $usage.="
+  MORE HELP
+  --reference reference.fasta (optional)
   --debug To call only the first 10k bases
-  "
+
+  The score at a position is the sum of the quality scores in the reads at that particular position times the mapping quality of those reads. Negative score for a base that does not agree with the consensus.
+  When there is an ambiguous base call though, there will be a field called ifIHadToGuess whose value is the best guess at that position.
+  ";
+
+  return $usage;
 }
