@@ -120,6 +120,7 @@ sub bamToVcf{
       $Q->enqueue(@buffer);
       @buffer=();
       logmsg "Enqueued $numPositions positions";
+      sleep 1 while($Q->pending > 500000);
     }
     last if($$settings{debug} && $numPositions>9999);
   }
@@ -241,8 +242,8 @@ sub findConsensus{
   # Forward and reverse reads requirement {dnaDirection}
   my %dCount=(F=>0,R=>0); # direction counter
   for(my $i=0;$i<$$F{depth};$i++){
-    my $d= $$F{dnaDirection}[$i];
-    next if($d ne $winner);
+    my $nt=$$F{dnaArr}[$i];
+    next if($nt ne $winner);
     my $direction=$$F{dnaDirection}[$i];
     $dCount{$$F{dnaDirection}[$i]}++;
   }
