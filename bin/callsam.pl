@@ -159,7 +159,7 @@ sub pileupWorker{
     my $ID=$F{contig}.':'.$F{pos};
     # uppercase the calls to standardize it and make comparisons easier
     $ref=uc($ref);
-    $basecall=uc($basecall);
+    #$basecall=uc($basecall);
 
     # Use the info hash to generate the VCF info field
     my $info="";
@@ -172,13 +172,13 @@ sub pileupWorker{
     #$info=substr($info,0,-1);
 
     # if the user only wants variants and it is not a variant site, then skip it
-    #die "$F{contig},$F{pos},$ID,$ref,$basecall,$qual,$passFail,$info\n" if($F{pos}==392);
+    #die join("\t",$F{contig},$F{pos},$ID,$ref,$basecall,$qual,$passFail,$info)."\n" if($F{pos}==10202 && $F{contig} eq 'NODE56length16727cov16.9252');
     if( $$settings{'variants-only'} 
       && (uc($ref) eq uc($basecall) || uc($basecall) eq 'N' || uc($ref) eq 'N')
     ){
       next;
     }
-    $printQ->enqueue( join("\t",$F{contig},$F{pos},$ID,$ref,$basecall,$qual,$passFail,$info)."\n" );
+    $printQ->enqueue( join("\t",$F{contig},$F{pos},$ID,$ref,uc($basecall),$qual,$passFail,$info)."\n" );
   }
 }
 
@@ -221,13 +221,15 @@ sub findConsensus{
   # min depth requirement
   $passFail{depth}=$$F{depth} if($$F{depth} < $$settings{'min-coverage'});
 
-  my $dna=uc($$F{dna});
+  my $dna=$$F{dna};
+  #my $dna=uc($$F{dna});
 
   # find counts
   my %nt;
   $nt{$_}=0 for(("A".."Z"),'*'); # start the counts at zero
   for (@{$$F{dnaArr}}){
-    $nt{uc($_)}++;
+    $nt{$_}++;
+    #$nt{uc($_)}++;
   }
 
   # Sort the counts and find the majority
@@ -244,6 +246,7 @@ sub findConsensus{
   my $frequency=0.00;
     $frequency=sprintf("%0.2f",$nt{$winner}/$$F{depth}) if($$F{depth}>0);
   $passFail{freq}=$frequency if($frequency < $$settings{'min-frequency'});
+  #delete($passFail{freq});
 
   # Forward and reverse reads requirement {dnaDirection}.
   # For each nucleotide that agrees with the winning nt,
@@ -263,6 +266,7 @@ sub findConsensus{
       $passFail{reverseReads}=$dCount{R};
     }
   }
+  #die Dumper($$F{contig},$$F{pos},\%dCount,\%passFail,$$F{dnaArr})."\n" if($$F{pos}==10202 && $$F{contig} eq 'NODE56length16727cov16.9252');
 
   # Make some kind of score for the SNP
   # Currently: SUM(the quality score times the mapping quality)
@@ -291,8 +295,10 @@ sub findConsensus{
 
   # set the pass/fail field correctly
   my $passFail="PASS";
-  if(keys(%passFail) > 0){
-    $passFail="$_:$passFail{$_};" for(keys(%passFail));
+  my @passFailKey=keys(%passFail);
+  if(@passFailKey > 0){
+    $passFail="";
+    $passFail.="$_:$passFail{$_};" for(@passFailKey);
     $passFail.="ifIHadToGuess:$runnerUp"; # add this last key/value without semicolon
     $winner="N";
   }
@@ -304,7 +310,7 @@ sub findConsensus{
 sub parseDnaCigar{
   my($bamField,$refBase,$settings)=@_;
   my $cigar=$$bamField{dna};
-  $cigar=uc($cigar); 
+  #$cigar=uc($cigar); 
   my @direction; # don't want 100% in one direction
   
   my $length=length($cigar);
@@ -347,6 +353,19 @@ sub parseDnaCigar{
       $x=substr($cigar,$i,$lengthOfInsertion); # the insertion
       $i+=$lengthOfInsertion; # advance past the insertion
     }
+    # If this is a deletion, 
+    # then the format is -Nn... where N is the number deleted
+    # and n... is the nucleotide that was deleted
+    elsif($x eq '-'){
+      $i++;
+      die "Deletion shown in mpileup, but the length was not given" if(substr($cigar,$i,1)!~/(\d+)/);
+      my $lengthOfDeletion=$1;
+      my $digitsLen=length($lengthOfDeletion);
+
+      $i+=$digitsLen; # advance to the actual deletion
+      $x='*' x $lengthOfDeletion; # the "nucleotide" is a number of asterisks in a row
+      $i+=$lengthOfDeletion; # advance past the deletion
+    }
     
     # If this is not the beginning or end of a read,
     # then grab the nt. This would also grab deletions.
@@ -360,12 +379,20 @@ sub parseDnaCigar{
       $nt=$x;
     }
 
-    # directionality
-    my $direction='F';
-    $direction='R' if($nt=~/[a-z,]/);
+    # Determine the directionality. Deletions are asterisks and will be in no direction.
+    my $direction;
+    if($nt=~/[a-z,]/){
+      $direction='R';
+    } elsif($nt=~/[A-Z\.]/){
+      $direction='F';
+    } elsif($nt=~/\*/){
+      $direction="?";
+    } else{
+      die "ERROR: the directionality could not be parsed from '$nt'\n".Dumper($bamField);
+    }
     push(@direction,$direction);
 
-    push(@base,$nt);
+    push(@base,uc($nt)); # since the directionality is retained, then it is okay to forget lower/upper case for this nt
   }
   return \@base if(!wantarray);
   return (\@base,\@direction);
