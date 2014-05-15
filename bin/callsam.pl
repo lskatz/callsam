@@ -389,7 +389,8 @@ sub parseDnaCigar{
       $direction="?";
     } else{
       # for some reason, a deletion followed by the start of the read is causing problems.  This is a band-aid.
-      warn "rewind!\n"; $i-=2; next; 
+      #warn "rewind!\n"; 
+      $i-=2; next; 
       die "ERROR: the directionality could not be parsed from '$nt'\n".Dumper(bamField=>$bamField,nt=>join(" ",@base),direction=>join(" ",@direction));
     }
     push(@direction,$direction);
