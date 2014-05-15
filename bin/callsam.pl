@@ -359,8 +359,8 @@ sub parseDnaCigar{
     elsif($x eq '-'){
       $i++;
       die "Deletion shown in mpileup, but the length was not given" if(substr($cigar,$i,1)!~/(\d+)/);
-      my $lengthOfDeletion=$1;
-      my $digitsLen=length($lengthOfDeletion);
+      my $lengthOfDeletion=$1;                   # how long the deletion is in the read
+      my $digitsLen=length($lengthOfDeletion);   # how many digits that number takes up
 
       $i+=$digitsLen; # advance to the actual deletion
       $x='*' x $lengthOfDeletion; # the "nucleotide" is a number of asterisks in a row
@@ -388,7 +388,9 @@ sub parseDnaCigar{
     } elsif($nt=~/\*/){
       $direction="?";
     } else{
-      die "ERROR: the directionality could not be parsed from '$nt'\n".Dumper($bamField);
+      # for some reason, a deletion followed by the start of the read is causing problems.  This is a band-aid.
+      warn "rewind!\n"; $i-=2; next; 
+      die "ERROR: the directionality could not be parsed from '$nt'\n".Dumper(bamField=>$bamField,nt=>join(" ",@base),direction=>join(" ",@direction));
     }
     push(@direction,$direction);
 
