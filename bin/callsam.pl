@@ -172,7 +172,12 @@ sub pileupWorker{
     #$info=substr($info,0,-1);
 
     # if the user only wants variants and it is not a variant site, then skip it
-    next if($$settings{'variants-only'} && ($ref eq $basecall || $basecall eq 'N' || $ref eq 'N'));
+    #die "$F{contig},$F{pos},$ID,$ref,$basecall,$qual,$passFail,$info\n" if($F{pos}==392);
+    if( $$settings{'variants-only'} 
+      && (uc($ref) eq uc($basecall) || uc($basecall) eq 'N' || uc($ref) eq 'N')
+    ){
+      next;
+    }
     $printQ->enqueue( join("\t",$F{contig},$F{pos},$ID,$ref,$basecall,$qual,$passFail,$info)."\n" );
   }
 }
@@ -212,9 +217,9 @@ sub findConsensus{
   my($F,$settings)=@_;
   # If passFail is set to _anything_ before the final base call is made, then it is considered a fail.
   # It is literally used in the filter field though and is informative in the VCF output
-  my $passFail="";
+  my %passFail;
   # min depth requirement
-  $passFail.="d$$F{depth};" if($$F{depth} < $$settings{'min-coverage'});
+  $passFail{depth}=$$F{depth} if($$F{depth} < $$settings{'min-coverage'});
 
   my $dna=uc($$F{dna});
 
@@ -230,6 +235,7 @@ sub findConsensus{
     return $nt{$b}<=>$nt{$a}; 
   } keys(%nt);
   my $winner=$majorityNt[0];
+  my $runnerUp=$winner; # in case $winner needs to be set to another thing
 
   # alter the hash to show the Allele Count
   $$F{info}{AC}=$nt{$winner};
@@ -237,30 +243,25 @@ sub findConsensus{
   # Majority consensus requirement
   my $frequency=0.00;
     $frequency=sprintf("%0.2f",$nt{$winner}/$$F{depth}) if($$F{depth}>0);
-  $passFail.="freq$frequency;" if($frequency < $$settings{'min-frequency'});
+  $passFail{freq}=$frequency if($frequency < $$settings{'min-frequency'});
 
-  # Forward and reverse reads requirement {dnaDirection}
+  # Forward and reverse reads requirement {dnaDirection}.
+  # For each nucleotide that agrees with the winning nt,
+  # see which direction its read is going in.
   my %dCount=(F=>0,R=>0); # direction counter
   for(my $i=0;$i<$$F{depth};$i++){
     my $nt=$$F{dnaArr}[$i];
-    next if($nt ne $winner);
+    #print join("\t","$nt/$winner",$$F{dnaDirection}[$i])."\n";
+    next if(uc($nt) ne uc($winner));
     my $direction=$$F{dnaDirection}[$i];
     $dCount{$$F{dnaDirection}[$i]}++;
   }
   my $sum=$dCount{F}+$dCount{R};
   if($sum > 0){ # sometimes forward/reverse is not specified and therefore cannot be used
     if($dCount{F}/$sum < 0.1 || $dCount{R}/$sum < 0.1){
-      $passFail.="forwardReads$dCount{F};reverseReads$dCount{R};";
+      $passFail{forwardReads}=$dCount{F};
+      $passFail{reverseReads}=$dCount{R};
     }
-  }
-
-  # set the pass/fail field correctly
-  my $runnerUp=$winner;
-  if($passFail){
-    $winner="N";
-    $passFail=~s/;+$//;
-  } else {
-    $passFail="PASS";
   }
 
   # Make some kind of score for the SNP
@@ -271,7 +272,7 @@ sub findConsensus{
   my @baq =map(ord($_)-33,split(//,$$F{mappingQual}));
   for(my $i=0;$i<$$F{depth};$i++){
     my $weight=$qual[$i]*$baq[$i];
-    if($$F{dnaArr}[$i] eq $winner){
+    if(uc($$F{dnaArr}[$i]) eq uc($winner)){
       $score+=$weight;
     } else {
       $score-=$weight;
@@ -279,13 +280,21 @@ sub findConsensus{
   }
   # transform the score
   # TODO maybe put some rationale and thinking into this formula
-  $score=sprintf("%0.2f",$score/sum(@qual,@baq));
-
+  $score=sprintf("%0.2f",$score);
+  #$score=sprintf("%0.2f",$score/sum(@qual,@baq));
   # If the score is too small, then the base call is ambiguous and doesn't pass the filter
   # TODO: test what the score theshold should be 
   if($score < 0){
-    $passFail="score:$score;ifIHadToGuess:$runnerUp";
+    $passFail{score}=$score;
     $winner='N';
+  }
+
+  # set the pass/fail field correctly
+  my $passFail="PASS";
+  if(keys(%passFail) > 0){
+    $passFail="$_:$passFail{$_};" for(keys(%passFail));
+    $passFail.="ifIHadToGuess:$runnerUp"; # add this last key/value without semicolon
+    $winner="N";
   }
 
   return ($winner,$passFail,$score);
