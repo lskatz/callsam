@@ -29,15 +29,6 @@ sub main{
   my ($file)=@ARGV;
   die "ERROR: need input file\n".usage($settings) if(!$file);
   
-  # If there is only 1 cpu, then the output can be unsorted streaming.
-  if($$settings{numcpus} < 2){
-    $$settings{numcpus}=1;
-    if(!$$settings{unsorted}){
-      logmsg "Num cpus are 1, so there are no race conditions. So, I am setting the option 'unsorted' so that the output is streaming.";
-      $$settings{unsorted}=1;
-    }
-  }
-
   # get all the reference bases into a hash
   my $refBase=readReference($settings);
   printHeaders($settings);
@@ -102,24 +93,23 @@ sub bamToVcf{
   logmsg "\n  $command";
   open($fp,"$command | ") or die "Could not open $file with samtools mpileup:$!";
 
-  # Because it is cpu-heavy to enqueue once each line,
-  # Save a bunch of lines in an array before enqueuing them.
-  my @buffer;
-  while(<$fp>){
+  while(my $line=<$fp>){
     $numPositions++;
-    pileupWorker($_,$refBase,$settings);
+    pileupToVcf($line,$refBase,$settings);
+
     if($numPositions % 100000 == 0){
-      logmsg "Got through $numPositions positions";
-      last if($$settings{debug} && $numPositions>9999);
+      logmsg "Finished with $numPositions positions";
+      last if($$settings{debug} && $numPositions > 10000);
     }
   }
-  close $fp;            # close out samtools
-  logmsg "Finished with $numPositions";
-
+  logmsg "Closing the samtools/mpileup stream";
+  close $fp;                                      # close out samtools
+  logmsg "Finished with $numPositions positions";
+  
   return $numPositions;
 }
 
-sub pileupWorker{
+sub pileupToVcf{
   my($line,$refBase,$settings)=@_;
   my @bamField=qw(contig pos basecall depth dna qual mappingQual readPos);
   chomp $line;
