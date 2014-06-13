@@ -26,6 +26,8 @@ sub main{
   $$settings{'reference'} || logmsg("Warning: reference not given");
   $$settings{numcpus}||=1;
   $$settings{mpileupxopts}||="-q 1";
+  $$settings{tempdir}||="tmp";
+  mkdir $$settings{tempdir} if(!-d $$settings{tempdir});
   my ($file)=@ARGV;
   die "ERROR: need input file\n".usage($settings) if(!$file);
   
@@ -83,6 +85,7 @@ sub printHeaders{
 }
 sub bamToVcf{
   my($file,$refBase,$settings)=@_;
+  my $mpileup="$$settings{tempdir}/mpileup";
 
   # Run mpileup to show the pileup at each position.
   # Feed each line of mpileup to the threads that analyze them.
@@ -91,7 +94,10 @@ sub bamToVcf{
   my $refArg=($$settings{reference})?"-f $$settings{reference}":"";
   my $command="samtools mpileup $$settings{mpileupxopts} $refArg -O -s '$file'";
   logmsg "\n  $command";
-  open($fp,"$command | ") or die "Could not open $file with samtools mpileup:$!";
+  system("$command > $mpileup"); die if $?;
+
+  logmsg "Mpileup done.  Reading the output $mpileup";
+  open($fp,$mpileup) or die "Could not open mpileup $mpileup:$!";
 
   while(my $line=<$fp>){
     $numPositions++;
