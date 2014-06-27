@@ -43,7 +43,7 @@ sub toBam{
     } elsif(is_bam($f,$settings)){
       $bam=$f;
     } elsif(is_cram($f,$settings)){
-      $bam=cramToBam($f,$settings));
+      $bam=cramToBam($f,$settings);
     } else {
       die "ERROR: I do not understand the format of $_";
     }

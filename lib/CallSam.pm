@@ -14,7 +14,7 @@ use Data::Dumper;
 
 use Exporter;
 our @ISA = "Exporter";
-our @methods = qw(logmsg fullPathToExec mktempdir is_sam is_bam);
+our @methods = qw(logmsg fullPathToExec mktempdir is_sam is_bam is_cram);
 our %EXPORT_TAGS = (all => [@methods]);
 Exporter::export_ok_tags('all');
 
