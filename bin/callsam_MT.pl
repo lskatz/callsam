@@ -123,7 +123,7 @@ sub bamToVcf{
     }
     $numPositions+=$lineCounter;
     $thr[$threadIndex]=threads->new(\&pileupWorker,\@mpileupLine,$printQueue,$refBase,$settings);
-    logmsg "Enqueuing $lineCounter positions into thread ".$thr[$threadIndex]->tid."/$threadIndex ($numPositions positions total so far)";
+    logmsg "Enqueuing $lineCounter positions into thread TID".$thr[$threadIndex]->tid."/$threadIndex ($numPositions positions total so far)";
     last if($$settings{debug});
   }
 
@@ -135,6 +135,7 @@ sub bamToVcf{
     $lineCounter++;
     last if($lineCounter > $numPerThread);
   }
+  logmsg "Letting the zeroth thread TID".$thr[0]->tid." finish before adding more to it...";
   $thr[0]->join; # wait for it to be joined and then pop a new set into it
   $thr[0]=threads->new(\&pileupWorker,\@mpileupLine,$printQueue,$refBase,$settings);
   logmsg "Put the remainder $lineCounter positions into thread 0";
@@ -144,7 +145,7 @@ sub bamToVcf{
 
   # wrap up the threads
   for(my $i=0;$i<@thr;$i++){
-    logmsg "Waiting on thread ".$thr[$i]->tid;
+    logmsg "Waiting on thread TID".$thr[$i]->tid."/$i";
     $thr[$i]->join;
   }
   logmsg "Done waiting on threads";
@@ -162,7 +163,6 @@ sub pileupWorker{
   my @buffer;
   my $num=@$lineArr;
   for(my $i=0;$i<$num;$i++){
-    #logmsg "$TID\t$i\t$num ".__LINE__;
     my $line=$$lineArr[$i];
     # Helps make the loop reverse-compatible with undef being queued
     if(!defined($line)){
