@@ -12,12 +12,9 @@ use Bio::Perl;
 use File::Basename;
 use threads;
 use Thread::Queue;
-use threads::shared;
 use FindBin;
 use lib "$FindBin::Bin/../lib";
 use CallSam qw/logmsg/;
-
-my $timeForAnalysis :shared = 0; # when true, the worker threads can run
 
 $0=fileparse($0);
 exit(main());
@@ -98,11 +95,11 @@ sub printHeaders{
 sub bamToVcf{
   my($file,$refBase,$settings)=@_;
 
-  my $Q=Thread::Queue->new;
   my $printQueue=Thread::Queue->new;
   my @thr;
-  $thr[$_]=threads->new(\&pileupWorker,$Q,$printQueue,$refBase,$settings) for(0..$$settings{numcpus}-1);
+  #$thr[$_]=threads->new(\&pileupWorker,$Q,$printQueue,$refBase,$settings) for(0..$$settings{numcpus}-1);
   my $printer=threads->new(\&vcfPrinter,$printQueue,$settings);
+
 
   # Run mpileup to show the pileup at each position.
   # Feed each line of mpileup to the threads that analyze them.
@@ -110,51 +107,47 @@ sub bamToVcf{
   my $numPositions=0;
   my $refArg=($$settings{reference})?"-f $$settings{reference}":"";
   my $command="samtools mpileup $$settings{mpileupxopts} $refArg -O -s '$file'";
+  my $numPileupLines=`$command | wc -l`; chomp($numPileupLines);
   logmsg "\n  $command";
   open($fp,"$command | ") or die "Could not open $file with samtools mpileup:$!";
 
-  # Because it is cpu-heavy to enqueue once each line,
-  # Save a bunch of lines in an array before enqueuing them.
-  my @buffer;
-  while(<$fp>){
-    $numPositions++;
-    push(@buffer,$_);
-    if($numPositions % 100000 == 0){
-      $Q->enqueue(@buffer);
-      @buffer=();
-      logmsg "Enqueued $numPositions positions";
-      $timeForAnalysis=1; # now that things are enqueued, we can start analyzing
-      last if($$settings{debug} && $numPositions>9999);
+  ## new MT idea: just copy over X lines of the pileup to each thread
+  my $numPerThread=int($numPileupLines/$$settings{numcpus});
+  for my $threadIndex(0..$$settings{numcpus}-1){
+    my @mpileupLine=();
+    my $lineCounter=0;
+    while(my $line=<$fp>){
+      push(@mpileupLine,$line);
+      $lineCounter++;
+      last if($lineCounter > $numPerThread);
     }
+    $numPositions+=$lineCounter;
+    $thr[$threadIndex]=threads->new(\&pileupWorker,\@mpileupLine,$printQueue,$refBase,$settings);
+    logmsg "Enqueuing $lineCounter positions into thread ".$thr[$threadIndex]->tid."/$threadIndex ($numPositions positions total so far)";
+    last if($$settings{debug});
   }
-  $Q->enqueue(@buffer); # enqueue any remaining lines
-  @buffer=();           # clear out some memory
-  close $fp;            # close out samtools
-  logmsg "Finished enqueuing $numPositions";
-  # Set the variable once here too just to be sure it gets set even in debug mode
-  $timeForAnalysis=1; # Set the variable once here too just to be sure it gets set even in debug mode
-  # Sleep so that the threads know it's time for analysis and then 
-  # turn that switch again so that they can exit properly.
-  sleep 2;
-  $timeForAnalysis=0;
-  logmsg "Sent the signal for threads to end when the queue is empty";
 
-  # Update the user how close we are to finishing
-  while($Q->pending > 0){
-    # update
-    logmsg $Q->pending." left in the queue";
-    # break out of here if the queue is almost done
-    for(1..30){
-      last if($Q->pending <100);
-      sleep 2;
-    }
+  # push the rest of the file into thread 0
+  my @mpileupLine=();
+  my $lineCounter=0;
+  while(my $line=<$fp>){
+    push(@mpileupLine,$line);
+    $lineCounter++;
+    last if($lineCounter > $numPerThread);
   }
+  $thr[0]->join; # wait for it to be joined and then pop a new set into it
+  $thr[0]=threads->new(\&pileupWorker,\@mpileupLine,$printQueue,$refBase,$settings);
+  logmsg "Put the remainder $lineCounter positions into thread 0";
+
+  logmsg "Finished enqueuing $numPositions positions.";
+  close $fp;
 
   # wrap up the threads
-  $Q->enqueue(undef) for(@thr);
-  for(@thr){
-    $_->join;
+  for(my $i=0;$i<@thr;$i++){
+    logmsg "Waiting on thread ".$thr[$i]->tid;
+    $thr[$i]->join;
   }
+  logmsg "Done waiting on threads";
   $printQueue->enqueue(undef);
   $printer->join;
 
@@ -162,84 +155,60 @@ sub bamToVcf{
 }
 
 sub pileupWorker{
-  my($Q,$printQ,$refBase,$settings)=@_;
+  my($lineArr,$printQ,$refBase,$settings)=@_;
   my @bamField=qw(contig pos basecall depth dna qual mappingQual readPos);
-  my $numToDequeue=$$settings{numcpus} ** 2; # to help with too many threads accessing memory
   my $TID="TID".threads->tid;
 
-  # Wait for it to be time for analysis.
-  # When looping, exit if there is nothing left in the queue AND if it is not time for analysis anymore.
-  while(!$timeForAnalysis){
-    #logmsg "$TID: waiting for analysis time";
-    sleep 1;
-  }
-  SAMLINE:
-  while(my @line=$Q->dequeue(1)){
-    #my @line;
-    # stop the other threads from dequeuing at the same time
-    #{
-    #  lock $timeForAnalysis;
-    #  @line=$Q->dequeue_nb($numToDequeue);
-    #}
-
-    # This is how we break out of the loop. If:
-    #   1) There are no new elements in the line
-    #   2) It is no longer time for analysis
-    if(@line<2 && !defined($line[0])){
-      last if(!$timeForAnalysis);
-      logmsg "$TID: \@line is not defined. Sleeping for one second";
-      sleep 1;
+  my @buffer;
+  my $num=@$lineArr;
+  for(my $i=0;$i<$num;$i++){
+    #logmsg "$TID\t$i\t$num ".__LINE__;
+    my $line=$$lineArr[$i];
+    # Helps make the loop reverse-compatible with undef being queued
+    if(!defined($line)){
+      logmsg "$TID: \$line $i is not defined.  Skipping";
       next;
     }
 
-    # Look at individual SAM lines to analyze them.
-    for my $line(@line){
-      # Helps make the loop reverse-compatible with undef being queued
-      if(!defined($line)){
-        logmsg "$TID: \$line is not defined.  Skipping (time for analysis? $timeForAnalysis) ".Dumper \@line;
-        last if(!$timeForAnalysis);
-        next;
-      }
+    chomp $line;
+    # %F and @F have all the mpileup fields.
+    # These values will be parsed to make VCF output fields.
+    my @F=split /\t/, $line;
+    my %F;
+    @F{@bamField}=@F;
+    $F{info}={DP=>$F{depth}}; # put the depth into the info field so that it is displayed correctly.
+    # Turn the DNA cigar line to an array.
+    ($F{dnaArr},$F{dnaDirection})=parseDnaCigar(\%F,$refBase,$settings);
+    # Use the DNA array and other %F fields to make a consensus base.
+    my ($basecall,$passFail,$qual)=findConsensus(\%F,$settings);
+    # Find the reference base in the complex hash. A dot if not found.
+    my $ref=$$refBase{$F{contig}}[$F{pos}] || '.'; 
+    # A samtools-style identifier for the appropriate VCF field.
+    my $ID=$F{contig}.':'.$F{pos};
+    # uppercase the calls to standardize it and make comparisons easier
+    $ref=uc($ref);
+    #$basecall=uc($basecall);
 
-      chomp $line;
-      # %F and @F have all the mpileup fields.
-      # These values will be parsed to make VCF output fields.
-      my @F=split /\t/, $line;
-      my %F;
-      @F{@bamField}=@F;
-      $F{info}={DP=>$F{depth}}; # put the depth into the info field so that it is displayed correctly.
-      # Turn the DNA cigar line to an array.
-      ($F{dnaArr},$F{dnaDirection})=parseDnaCigar(\%F,$refBase,$settings);
-      # Use the DNA array and other %F fields to make a consensus base.
-      my ($basecall,$passFail,$qual)=findConsensus(\%F,$settings);
-      # Find the reference base in the complex hash. A dot if not found.
-      my $ref=$$refBase{$F{contig}}[$F{pos}] || '.'; 
-      # A samtools-style identifier for the appropriate VCF field.
-      my $ID=$F{contig}.':'.$F{pos};
-      # uppercase the calls to standardize it and make comparisons easier
-      $ref=uc($ref);
-      #$basecall=uc($basecall);
+    # Use the info hash to generate the VCF info field
+    my $info="";
+    while(my($key,$value)=each(%{$F{info}})){
+      $info.="$key=$value;";
+    } 
+    # chop off that semicolon
+    $info=~s/;$//;
+    # I wonder if substr($info,0,-1) would be faster to remove the semicolon
+    #$info=substr($info,0,-1);
 
-      # Use the info hash to generate the VCF info field
-      my $info="";
-      while(my($key,$value)=each(%{$F{info}})){
-        $info.="$key=$value;";
-      } 
-      # chop off that semicolon
-      $info=~s/;$//;
-      # I wonder if substr($info,0,-1) would be faster to remove the semicolon
-      #$info=substr($info,0,-1);
-
-      # if the user only wants variants and it is not a variant site, then skip it
-      #die join("\t",$F{contig},$F{pos},$ID,$ref,$basecall,$qual,$passFail,$info)."\n" if($F{pos}==10202 && $F{contig} eq 'NODE56length16727cov16.9252');
-      if( $$settings{'variants-only'} 
-        && (uc($ref) eq uc($basecall) || uc($basecall) eq 'N' || uc($ref) eq 'N')
-      ){
-        next;
-      }
-      $printQ->enqueue( join("\t",$F{contig},$F{pos},$ID,$ref,uc($basecall),$qual,$passFail,$info)."\n" );
+    # if the user only wants variants and it is not a variant site, then skip it
+    #die join("\t",$F{contig},$F{pos},$ID,$ref,$basecall,$qual,$passFail,$info)."\n" if($F{pos}==10202 && $F{contig} eq 'NODE56length16727cov16.9252');
+    if( $$settings{'variants-only'} 
+      && (uc($ref) eq uc($basecall) || uc($basecall) eq 'N' || uc($ref) eq 'N')
+    ){
+      next;
     }
+    push(@buffer,join("\t",$F{contig},$F{pos},$ID,$ref,uc($basecall),$qual,$passFail,$info)."\n");
   }
+  $printQ->enqueue(@buffer);
   logmsg "$TID: DONE";
 }
 
@@ -248,30 +217,10 @@ sub pileupWorker{
 sub vcfPrinter{
   my($Q,$settings)=@_;
 
-  #if($$settings{unsorted}){
-  #  $|++;
-    while(defined(my $line=$Q->dequeue)){
-      print $line;
-    }
-    return;
-  #}
-  # TODO just have a sorting example that preserves the header of the VCF
-
-  my @unsorted;
   while(defined(my $line=$Q->dequeue)){
-    push(@unsorted,$line);
+    print $line;
   }
-  return if($$settings{unsorted});
-  
-  my @sorted=sort {
-    my($contigA,$posA)=split /\t/,$a;
-    my($contigB,$posB)=split /\t/,$b;
-    return $contigA cmp $contigB if($contigA ne $contigB);
-    $posA <=> $posB;
-  } @unsorted;
-
-  # TODO keep track on whether the whole contig was expressed
-  print $_ for(@sorted);
+  return;
 }  
 
 # finds the consensus for a position
