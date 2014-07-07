@@ -14,22 +14,24 @@ use threads;
 use Thread::Queue;
 use FindBin;
 use lib "$FindBin::Bin/../lib";
-use CallSam qw/logmsg/;
+use CallSam qw/logmsg mktempdir/;
 
 $0=fileparse($0);
 exit(main());
 
 sub main{
   my $settings={};
-  GetOptions($settings,qw(help min-coverage=i min-frequency=s reference=s numcpus=i unsorted variants-only mpileupxopts=s debug));
+  GetOptions($settings,qw(help min-coverage=i min-frequency=s reference=s numcpus=i unsorted variants-only mpileupxopts=s debug tempdir=s));
   die usage($settings) if($$settings{help} || !@ARGV);
   $$settings{'min-coverage'}||=10;
   $$settings{'min-frequency'}||=0.75;
   $$settings{'reference'} || logmsg("Warning: reference not given");
   $$settings{numcpus}||=1;
   $$settings{mpileupxopts}||="-q 1";
+  $$settings{tempdir}||=mktempdir();
   my ($file)=@ARGV;
   die "ERROR: need input file\n".usage($settings) if(!$file);
+  logmsg "Temporary directory is $$settings{tempdir}";
   
   # If there is only 1 cpu, then the output can be unsorted streaming.
   if($$settings{numcpus} < 2){
@@ -106,13 +108,25 @@ sub bamToVcf{
   my $fp;
   my $numPositions=0;
   my $refArg=($$settings{reference})?"-f $$settings{reference}":"";
-  my $command="samtools mpileup $$settings{mpileupxopts} $refArg -O -s '$file'";
-  my $numPileupLines=`$command | wc -l`; chomp($numPileupLines);
-  logmsg "\n  $command";
-  open($fp,"$command | ") or die "Could not open $file with samtools mpileup:$!";
+  my $mpileupErr="$$settings{tempdir}/mpileup.err";
+  my $mpileupOut="$$settings{tempdir}/mpileup.out";
+  my $command="samtools mpileup $$settings{mpileupxopts} $refArg -O -s '$file' 2>$mpileupErr 1>$mpileupOut";
+  logmsg "Running mpileup\n  $command";
+  system($command); 
+  die "Error with samtools:$!\n".`cat $mpileupErr` if($?);
+
+  # How many positions are there in the VCF?
+  my $numPileupLines;
+  open($fp,$mpileupOut) or die "Could not open $mpileupOut for reading:$!";
+  while(<$fp>){
+    $numPileupLines++;
+  }
+  close $fp;
+  logmsg "Found $numPileupLines sites.";
 
   ## new MT idea: just copy over X lines of the pileup to each thread
   my $numPerThread=int($numPileupLines/$$settings{numcpus});
+  open($fp,$mpileupOut) or die "Could not open $mpileupOut for reading:$!";
   for my $threadIndex(0..$$settings{numcpus}-1){
     my @mpileupLine=();
     my $lineCounter=0;
@@ -430,6 +444,7 @@ sub usage{
   $usage.="
   MORE HELP
   --reference reference.fasta (optional)
+  --tempdir dir/ (default: a directory under /tmp/)
   --debug To call only the first 10k bases
   EXAMPLES
     $0 file.sorted.bam > out.vcf              # vanilla usage
