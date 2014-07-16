@@ -115,51 +115,34 @@ sub bamToVcf{
   system($command); 
   die "Error with samtools:$!\n".`cat $mpileupErr` if($?);
 
-  # How many positions are there in the VCF?
-  my $numPileupLines;
+  # How many positions are there in the VCF? Line count!
   open($fp,$mpileupOut) or die "Could not open $mpileupOut for reading:$!";
-  while(<$fp>){
-    $numPileupLines++;
-  }
+  my @mpileupLine=<$fp>; # also store the file in memory
+  my $numPileupLines=@mpileupLine;
+  chomp(@mpileupLine);
   close $fp;
   logmsg "Found $numPileupLines sites.";
 
   ## new MT idea: just copy over X lines of the pileup to each thread
   my $numPerThread=int($numPileupLines/$$settings{numcpus});
-  open($fp,$mpileupOut) or die "Could not open $mpileupOut for reading:$!";
   for my $threadIndex(0..$$settings{numcpus}-1){
-    my @mpileupLine=();
-    my $lineCounter=0;
-    while(my $line=<$fp>){
-      push(@mpileupLine,$line);
-      $lineCounter++;
-      last if($lineCounter > $numPerThread);
-    }
+    my @threadMpileupLine=splice @mpileupLine,0,$numPerThread;
+    $thr[$threadIndex]=threads->new(\&pileupWorker,\@threadMpileupLine,$printQueue,$refBase,$settings);
+    my $lineCounter=@threadMpileupLine;
     $numPositions+=$lineCounter;
-    $thr[$threadIndex]=threads->new(\&pileupWorker,\@mpileupLine,$printQueue,$refBase,$settings);
     logmsg "Enqueuing $lineCounter positions into thread TID".$thr[$threadIndex]->tid."/$threadIndex ($numPositions positions total so far)";
     last if($$settings{debug});
   }
-
-  # push the rest of the file into thread 0
-  my @mpileupLine=();
-  my $lineCounter=0;
-  while(my $line=<$fp>){
-    push(@mpileupLine,$line);
-    $lineCounter++;
-    last if($lineCounter > $numPerThread);
-  }
-  logmsg "Letting the zeroth thread TID".$thr[0]->tid." finish before adding more to it...";
-  $thr[0]->join; # wait for it to be joined and then pop a new set into it
-  $thr[0]=threads->new(\&pileupWorker,\@mpileupLine,$printQueue,$refBase,$settings);
-  logmsg "Put the remainder $lineCounter positions into thread 0";
+  # the rest of the lines can go into a last thread
+  $numPositions+=@mpileupLine;
+  $thr[$$settings{numcpus}]=threads->new(\&pileupWorker,\@mpileupLine,$printQueue,$refBase,$settings);
+  logmsg "Enqueuing ".scalar(@mpileupLine)." into the last thread TID".$thr[$$settings{numcpus}]->tid."/$$settings{numcpus}";
 
   logmsg "Finished enqueuing $numPositions positions.";
-  close $fp;
 
   # wrap up the threads
   for(my $i=0;$i<@thr;$i++){
-    logmsg "Waiting on thread TID".$thr[$i]->tid."/$i";
+    #logmsg "Waiting on thread TID".$thr[$i]->tid."/$i";
     $thr[$i]->join;
   }
   logmsg "Done waiting on threads";
@@ -177,17 +160,19 @@ sub pileupWorker{
   my @buffer;
   my $num=@$lineArr;
   for(my $i=0;$i<$num;$i++){
-    my $line=$$lineArr[$i];
     # Helps make the loop reverse-compatible with undef being queued
-    if(!defined($line)){
+    if(!defined($$lineArr[$i])){
       logmsg "$TID: \$line $i is not defined.  Skipping";
       next;
     }
 
-    chomp $line;
+    # NOTE: this line is gunking up everything!
+    #  callsam_MT.pl: main::pileupWorker: TID9: NODE108length2922cov8.025325   2143    N       2       T+12AGTATAGTACTTt+12agtatagtactt        !!      ]]      66,50
+    #logmsg "$TID: $$lineArr[$i]" if($TID eq 'TID9');
+    #chomp $$lineArr[$i];
     # %F and @F have all the mpileup fields.
     # These values will be parsed to make VCF output fields.
-    my @F=split /\t/, $line;
+    my @F=split /\t/, $$lineArr[$i];
     my %F;
     @F{@bamField}=@F;
     $F{info}={DP=>$F{depth}}; # put the depth into the info field so that it is displayed correctly.
@@ -370,13 +355,12 @@ sub parseDnaCigar{
     # and n... is the nucleotide(s).
     if ($x eq '+'){
       $i++;
-      die "Insertion shown in mpileup, but the length was not given" if(substr($cigar,$i,1)!~/(\d+)/);
+      my $restOfCigar=substr($cigar,$i);
+      die "ERROR: Could not determine the insertion in $restOfCigar" if(substr($cigar,$i)!~/^(\d+)([a-zA-Z\.,])/);
       my $lengthOfInsertion=$1;
-      my $digitsLen=length($lengthOfInsertion);
+      $x=$2;
 
-      $i+=$digitsLen; # advance to the actual insertion
-      $x=substr($cigar,$i,$lengthOfInsertion); # the insertion
-      $i+=$lengthOfInsertion; # advance past the insertion
+      $i+=length("$lengthOfInsertion$x"); # advance past the insertion
     }
     # If this is a deletion, 
     # then the format is -Nn... where N is the number deleted
