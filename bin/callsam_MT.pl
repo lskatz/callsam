@@ -436,6 +436,7 @@ sub usage{
 
     # sort the output in case you used multiple CPUs
     $0 file.sorted.bam > out.vcf && (grep '#' out.vcf; grep -v '#' out.vcf | sort -k1,1 -k2,2n) > out.sorted.vcf
+    sortVcf.pl out.vcf > out.sorted.vcf
 
   The score at a position is the sum of the quality scores in the reads at that particular position times the mapping quality of those reads. Negative score for a base that does not agree with the consensus.
   When there is an ambiguous base call though, there will be a field called ifIHadToGuess whose value is the best guess at that position.
