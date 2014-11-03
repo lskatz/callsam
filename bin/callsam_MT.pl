@@ -13,7 +13,7 @@ use File::Basename;
 use threads;
 use Thread::Queue;
 use FindBin;
-use lib "$FindBin::Bin/../lib";
+use lib "$FindBin::RealBin/../lib";
 use CallSam qw/logmsg mktempdir/;
 
 $0=fileparse($0);
