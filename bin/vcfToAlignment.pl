@@ -13,7 +13,7 @@ use File::Basename;
 use threads;
 use Thread::Queue;
 use FindBin;
-use lib "$FindBin::Bin/../lib";
+use lib "$FindBin::FindBin/../lib";
 use CallSam qw/logmsg/;
 
 $0=fileparse($0);
