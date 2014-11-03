@@ -11,7 +11,7 @@ use List::Util qw/sum min max/;
 use Bio::Perl;
 use File::Basename;
 use FindBin;
-use lib "$FindBin::Bin/../lib";
+use lib "$FindBin::RealBin/../lib";
 use CallSam qw/logmsg/;
 
 $0=fileparse($0);
