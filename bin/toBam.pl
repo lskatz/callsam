@@ -8,7 +8,7 @@ use warnings;
 use Getopt::Long;
 use Data::Dumper;
 use FindBin;
-use lib "$FindBin::Bin/../lib";
+use lib "$FindBin::RealBin/../lib";
 use CallSam qw/logmsg mktempdir is_sam is_bam is_cram/;
 
 exit main();
