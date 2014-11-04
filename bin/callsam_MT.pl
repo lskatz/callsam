@@ -15,6 +15,7 @@ use Thread::Queue;
 use FindBin;
 use lib "$FindBin::RealBin/../lib";
 use CallSam qw/logmsg mktempdir/;
+use Vcf;
 
 $0=fileparse($0);
 exit(main());
@@ -43,8 +44,10 @@ sub main{
   }
 
   # get all the reference bases into a hash
+  my $vcfObj = Vcf->new(fh=>\*STDOUT,version=>"4.1");
+  formatHeader($vcfObj,$settings);
+
   my $refBase=readReference($settings);
-  printHeaders($settings);
   my $numpositions=bamToVcf($file,$refBase,$settings);
 
   logmsg "Done. $numpositions positions were analyzed.";
@@ -67,32 +70,28 @@ sub readReference{
   return \%seq;
 }
 
-sub printHeaders{
-  my($settings)=@_;
+sub formatHeaders{
+  my($vcfObj,$settings)=@_;
+
+  # date header
   my($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst)=localtime(time);
   my $date=sprintf("%04d%02d%02d",$year+1900,$mon+1,$mday);
+  $vcfObj->add_header_line({key=>"fileDate",value=>$date});
 
-  # simply put all the headers into an array to process later
-  my @header=split/\s*\n+\s*/,qq(
-      fileformat=VCFv4.2
-      fileDate=$date
-      source=$0
-      INFO=<ID=DP,Number=1,Type=Integer,Description="Total Depth">
-      INFO=<ID=AC,Number=1,Type=Integer,Description="allele count in genotypes, for each ALT allele, in the same order as listed">
-  );
-  push(@header,"reference=".$$settings{reference}) if($$settings{reference});
-  
-  # clean up and process the headers
-  @header=grep(!/^\s*$/,@header);
-  for(@header){
-    $_='##'.$_;
-  }
-  # add the final header with one hash tag
-  push(@header,join("\t",'#CHROM',qw(POS ID REF ALT QUAL FILTER INFO)));
-  # finally print it out
-  print $_."\n" for(@header);
-  # return the number of headers
-  return scalar(@header);
+  # misc headers
+  $vcfObj->add_header_line({key=>"source",value=>$0});
+  $vcfObj->add_header_line({reference=>$$settings{reference}}) if($$settings{reference});
+
+  # INFO
+  $vcfObj->add_header_line({key=>"INFO",ID=>"DP",Number=>1,Type=>"Integer",Description=>"Total Depth"});
+  $vcfObj->add_header_line({key=>"INFO",ID=>"AC",Number=>1,Type=>"Integer",Description=>"allele count in genotypes, for each ALT allele, in the same order as listed"});
+
+  # FORMAT
+  $vcfObj->add_header_line({key=>"FORMAT",ID=>"DP",Number=>1,Type=>"Integer",Description=>"Depth"});
+  $vcfObj->add_header_line({key=>"FORMAT",ID=>"AC",Number=>1,Type=>"Integer",Description=>"Alt allele count"});
+  $vcfObj->add_header_line({key=>"FORMAT",ID=>"GT",Number=>1,Type=>"String",Description=>"Genotype"});
+
+  return $vcfObj->format_header;
 }
 sub bamToVcf{
   my($file,$refBase,$settings)=@_;
@@ -166,10 +165,6 @@ sub pileupWorker{
       next;
     }
 
-    # NOTE: this line is gunking up everything!
-    #  callsam_MT.pl: main::pileupWorker: TID9: NODE108length2922cov8.025325   2143    N       2       T+12AGTATAGTACTTt+12agtatagtactt        !!      ]]      66,50
-    #logmsg "$TID: $$lineArr[$i]" if($TID eq 'TID9');
-    #chomp $$lineArr[$i];
     # %F and @F have all the mpileup fields.
     # These values will be parsed to make VCF output fields.
     my @F=split /\t/, $$lineArr[$i];
